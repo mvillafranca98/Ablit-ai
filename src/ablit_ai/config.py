@@ -51,3 +51,10 @@ TEXT_EXTENSIONS = {
 }
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff"}
+
+# Video can't be answered inline -- it goes through analyze_video.py, which
+# needs Whisper and the vision model loaded in sequence over several minutes.
+# Detected here so the UI can say so instead of silently dropping the file.
+VIDEO_EXTENSIONS = {
+    ".mov", ".mp4", ".m4v", ".avi", ".mkv", ".webm", ".mpg", ".mpeg", ".wmv",
+}

@@ -12,6 +12,7 @@ dependencies = [
     "huggingface-hub>=1.27.0",
     "mlx-lm>=0.31.3",
     "mlx-vlm>=0.6.10",
+    "mlx-whisper>=0.4.3",
     "pillow>=12.3.0",
     "pypdf>=6.15.0",
 ]

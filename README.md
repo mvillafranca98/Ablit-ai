@@ -84,12 +84,117 @@ On a base M4 (120 GB/s memory bandwidth):
 Attachments are capped (24k chars per file, 60k total) because every pasted token
 grows the KV cache. Tune in `src/ablit_ai/config.py`.
 
+## Video analysis
+
+Turn a screen recording into a teardown document — what the product does, how
+the workflow works, and a structural description of the UI.
+
+```bash
+uv run python analyze_video.py demo.mov
+```
+
+Several recordings of the same platform merge into one document:
+
+```bash
+uv run python analyze_video.py training/*.mov --frames 40 --language es
+```
+
+Options: `--frames N` (max keyframes **per video**, default 12), `--out`,
+`--language`, `--keep-frames`, `--frame-tokens N`.
+
+`--frames` is a cap, not a target — deduplication decides the real count, so
+setting it high just means "capture every distinct screen". A static 5-minute
+intro yields 4 screens at either 12 or 40; a dense 11-minute walkthrough yields
+12 at `--frames 12` but 23 at `--frames 40`. Under-sampling silently loses
+screens, so prefer a high cap and pay the time.
+
+Budget roughly **50s per unique screen**, not per minute of video.
+
+### Crop first if the app doesn't fill the frame
+
+Recordings of a video call, or of a window on a bigger desktop, waste most of
+the frame. Check one frame before committing an hour of compute:
+
+```bash
+ffmpeg -ss 120 -i recording.mov -frames:v 1 /tmp/check.png
+```
+
+If the app is a region rather than the whole frame, crop to it:
+
+```bash
+uv run python analyze_video.py rec.mov --crop 1240:552:14:283 --frames 40
+```
+
+This matters twice over. Cropping spends the downscale budget on the UI instead
+of on desktop chrome, and it stops the model documenting the surrounding
+desktop — a Google Meet call, a dock, browser tabs — as though it were part of
+the product. Reported geometry is measured against the cropped region, so
+coordinates stay usable.
+
+**Do not compress the source to speed things up.** Runtime is dominated by
+vision-model inference per frame, not by file size or decoding, so compression
+saves nothing on the slow part while destroying the small on-screen text that is
+the most valuable signal. If anything, record at a *higher* bitrate.
+
+Videos dropped into the chat GUI are refused with a pointer to this command —
+they are never silently skipped, because a model handed no content will invent a
+convincing document about a platform it has never seen.
+
+Requires ffmpeg:
+
+```bash
+brew install ffmpeg
+```
+
+### How it works
+
+Strictly sequential — 16 GB cannot hold these three models at once, so each is
+freed before the next loads:
+
+```
+ffprobe          resolution, duration, fps
+ffmpeg           16 kHz mono audio
+whisper          timestamped transcript          ~1.6 GB, freed
+ffmpeg           keyframes, perceptually deduped
+Qwen3-VL         per-frame layout description    ~5.4 GB, freed
+abliterated LLM  synthesis into Markdown         ~5.2 GB
+```
+
+Keyframes are over-sampled (scene cuts *and* even intervals), then collapsed by
+average-hash similarity before the vision stage. Extracting a frame is cheap;
+describing one costs ~45s. On a 26s test video this cut 8 candidate frames to 3
+unique screens with no loss.
+
+**Neither ffmpeg nor Whisper has anything to abliterate.** ffmpeg is a codec
+toolchain with no content policy; Whisper is speech-to-text and doesn't follow
+instructions, so it has no refusal behaviour. Only the final synthesis step uses
+the abliterated model.
+
+### Accuracy
+
+Measured on a 1280x720 synthetic demo with known ground truth:
+
+- **Structure and text: reliable.** Correctly recovered the sidebar/header/main
+  split, all four table columns, six row labels, three data-source options, and
+  most on-screen values.
+- **Geometry: approximate.** Reported the sidebar as ~256px when it was 220px.
+- **Colors: rough.** Hex estimates land in the right family, not on the value.
+- **OCR is not perfect.** It read a metric as `12,830` where the video showed
+  `12,930`.
+
+Treat dimensions as proportional guidance, not a spec. The report header says so
+too.
+
 ## Layout
 
 ```
 app.py                      Gradio UI and event wiring
+analyze_video.py            video → teardown document CLI
+bench.py / verify.py        model comparison; verify.py executes the code
 src/ablit_ai/config.py      model ids, limits, defaults
 src/ablit_ai/models.py      ModelManager — single-resident load/swap
 src/ablit_ai/attachments.py file → text extraction
 src/ablit_ai/chat.py        prompt assembly + streaming for both model kinds
+src/ablit_ai/video.py       ffmpeg probe / audio / keyframe extraction + dedupe
+src/ablit_ai/transcribe.py  Whisper via MLX
 ```

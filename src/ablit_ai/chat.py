@@ -8,22 +8,66 @@ from . import config
 from .models import MANAGER
 
 
+def content_text(content: object) -> str:
+    """Flatten one Gradio message's content down to plain text.
+
+    Gradio 6 hands history back as a list of typed parts —
+    ``[{"text": "...", "type": "text"}]`` — not as a string. Assuming a string
+    here silently drops every prior turn, and the model then answers each
+    message as if the conversation had just started.
+
+    Attachment messages arrive as ``{"path": ...}`` and carry no text for the
+    model to re-read, so they flatten to "" and get skipped.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict) and part.get("text"):
+                parts.append(str(part["text"]))
+        return "\n".join(parts)
+    if isinstance(content, dict) and content.get("text"):
+        return str(content["text"])
+    return ""
+
+
 def build_messages(
-    history: list[dict], system_prompt: str, user_text: str
+    history: list[dict],
+    system_prompt: str,
+    user_text: str,
+    max_history_chars: int = 24_000,
 ) -> list[dict]:
-    """Assemble an OpenAI-style message list from Gradio chat history."""
+    """Assemble an OpenAI-style message list from Gradio chat history.
+
+    Older turns are dropped once the replayed history exceeds
+    `max_history_chars`. The KV cache grows with every replayed token, and on a
+    16 GB machine an unbounded conversation will eventually stall the model.
+    """
+    turns: list[dict] = []
+    for turn in history:
+        role = turn.get("role")
+        text = content_text(turn.get("content")).strip()
+        if role in ("user", "assistant") and text:
+            turns.append({"role": role, "content": text})
+
+    # Keep the most recent turns that fit the budget, walking backwards.
+    kept: list[dict] = []
+    budget = max_history_chars
+    for turn in reversed(turns):
+        cost = len(turn["content"])
+        if cost > budget:
+            break
+        budget -= cost
+        kept.append(turn)
+    kept.reverse()
+
     messages: list[dict] = []
     if system_prompt.strip():
         messages.append({"role": "system", "content": system_prompt.strip()})
-
-    for turn in history:
-        role = turn.get("role")
-        content = turn.get("content")
-        # Gradio represents uploaded files as tuples; those carry no text for
-        # the model to re-read, so drop them from the replayed history.
-        if role in ("user", "assistant") and isinstance(content, str) and content:
-            messages.append({"role": role, "content": content})
-
+    messages.extend(kept)
     messages.append({"role": "user", "content": user_text})
     return messages
 

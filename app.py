@@ -8,6 +8,8 @@ after the initial model download.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import gradio as gr
 
 from src.ablit_ai import attachments, chat, config
@@ -37,7 +39,40 @@ def respond(
         return
 
     att = attachments.process(files)
-    prior = [t for t in history if isinstance(t.get("content"), str)]
+    # Pass the whole transcript through; build_messages normalises Gradio's
+    # part-list content and drops anything with no text of its own.
+    prior = list(history)
+
+    # Video can't be answered inline. Say so loudly -- silently dropping the
+    # file leaves the model with no content, and it will happily invent a
+    # plausible-looking document about a platform it has never seen.
+    if att.has_videos:
+        quoted = " ".join(f'"{p}"' for p in att.videos)
+        names = "\n".join(f"- `{Path(p).name}`" for p in att.videos)
+        history.append({
+            "role": "user",
+            "content": f"{text}\n\n📎 {attachments.describe(files)}".strip(),
+        })
+        history.append({
+            "role": "assistant",
+            "content": (
+                f"**I can't analyse video in this chat box — and I won't guess.**\n\n"
+                f"You attached {len(att.videos)} video file(s):\n{names}\n\n"
+                "Video needs Whisper for the audio and the vision model for the "
+                "frames, loaded in sequence over several minutes. That runs in "
+                "`analyze_video.py`, not here.\n\n"
+                "Run this in your terminal:\n\n"
+                f"```bash\nuv run python analyze_video.py {quoted} --frames 12\n```\n\n"
+                "It writes a Markdown document covering the workflows, interface "
+                "layout with approximate dimensions, and integration notes.\n\n"
+                "*Anything I produced here without reading the video would be "
+                "fabricated.*"
+            ),
+        })
+        yield history, f"{len(att.videos)} video(s) — use analyze_video.py", gr.update(
+            value=None, interactive=True
+        )
+        return
 
     # Show attachments in the transcript before the text turn.
     for image_path in att.images:

@@ -18,12 +18,17 @@ class Attachments:
     """The result of processing whatever the user dragged into the box."""
 
     images: list[str] = field(default_factory=list)
+    videos: list[str] = field(default_factory=list)
     text_blocks: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     @property
     def has_images(self) -> bool:
         return bool(self.images)
+
+    @property
+    def has_videos(self) -> bool:
+        return bool(self.videos)
 
     def as_prompt_preamble(self) -> str:
         """Text to prepend to the user's message, or "" if there's nothing."""
@@ -74,6 +79,10 @@ def process(paths: list[str]) -> Attachments:
 
         if suffix in config.IMAGE_EXTENSIONS:
             result.images.append(str(path))
+            continue
+
+        if suffix in config.VIDEO_EXTENSIONS:
+            result.videos.append(str(path))
             continue
 
         if suffix == ".pdf":
